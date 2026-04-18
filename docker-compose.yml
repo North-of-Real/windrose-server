@@ -1,8 +1,6 @@
 services:
   windrose-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: coehl/windrose-server:latest
     container_name: windrose-server
     restart: unless-stopped
 
@@ -18,6 +16,14 @@ services:
       # you can fill this in from ServerDescription.json afterward
       WORLD_ISLAND_ID: ""
 
+      # Networking
+      # P2pProxyAddress is written into ServerDescription.json.
+      # SERVER_PORT is passed as -port to the UE5 executable (if honoured).
+      # Windrose uses NAT punch-through so players connect via invite code,
+      # not directly to this port — but you may need it open for Steam relay.
+      P2P_PROXY_ADDRESS: "" # e.g. "0.0.0.0" or your public IP
+      SERVER_PORT: "7777"
+
       # Wine
       WINEDEBUG: "-all" # Set to "" for verbose Wine debug output
 
@@ -28,14 +34,15 @@ services:
       - windrose-logs:/data/logs # Server logs
 
     # ── Networking ─────────────────────────────────────────
-    # Windrose uses NAT punch-through / UPnP for player connections.
-    # The server must run with host networking OR have UPnP available.
-    # Use host mode for the easiest connectivity:
+    # Switch between host and bridge below depending on your setup.
+    #
+    # HOST MODE (recommended for NAT punch-through):
     network_mode: host
-    # Alternatively, use bridge with port forwards (update ports once
-    # the game's fixed ports are officially documented):
+    #
+    # BRIDGE MODE (if you need explicit port control):
+    # Comment out network_mode above and uncomment these instead.
     # ports:
-    #   - "7777:7777/udp"
+    #   - "${SERVER_PORT:-7777}:${SERVER_PORT:-7777}/udp"
     #   - "27015:27015/udp"
     #   - "27016:27016/tcp"
 

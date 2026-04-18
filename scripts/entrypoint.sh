@@ -17,9 +17,12 @@ STEAM_LOGIN="${STEAM_LOGIN:-anonymous}"
 
 mkdir -p "${SAVES_DIR}" "${CONFIG_DIR}" "${LOG_DIR}"
 
-# ── Step 1: Initialise Wine prefix (runtime, not build time) ──
-# wineboot needs HOME, USER, and a writable environment — all
-# available here at container start but not during docker build.
+# ── Fix: XDG_RUNTIME_DIR required by Wine ─────────────────
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-root}"
+mkdir -p "${XDG_RUNTIME_DIR}"
+chmod 700 "${XDG_RUNTIME_DIR}"
+
+# ── Step 1: Initialise Wine prefix ────────────────────────
 if [[ ! -f "${WINEPREFIX}/system.reg" ]]; then
     INFO "Initialising Wine prefix at ${WINEPREFIX} ..."
     export HOME="${HOME:-/root}"
@@ -52,14 +55,19 @@ if [[ -z "${SERVER_EXE}" ]]; then
 fi
 
 INFO "Found server executable: ${SERVER_EXE}"
-SERVER_ROOT=$(dirname "$(dirname "$(dirname "$(dirname "${SERVER_EXE}")")")")
+
+# The exe is directly in SERVER_DIR (not nested in UE5 Binaries/Win64 subdirs)
+# so use SERVER_DIR as the root rather than trying to walk up with dirname.
+SERVER_ROOT="${SERVER_DIR}"
 INFO "Server root: ${SERVER_ROOT}"
 
 # ── Step 4: Symlink save data to persistent volume ────────
 INTERNAL_SAVED="${SERVER_ROOT}/R5/Saved"
-mkdir -p "${INTERNAL_SAVED}"
+mkdir -p "$(dirname "${INTERNAL_SAVED}")"
 
-if [[ "$(ls -A "${INTERNAL_SAVED}" 2>/dev/null)" ]]; then
+# Seed persistent volume from any defaults the server shipped, if empty
+if [[ -d "${INTERNAL_SAVED}" && "$(ls -A "${INTERNAL_SAVED}" 2>/dev/null)" && \
+      -z "$(ls -A "${SAVES_DIR}" 2>/dev/null)" ]]; then
     INFO "Seeding persistent saves from server defaults..."
     cp -rn "${INTERNAL_SAVED}/." "${SAVES_DIR}/" 2>/dev/null || true
 fi
@@ -89,6 +97,7 @@ INFO "Logs → ${LOG_FILE}"
 INFO "----------------------------------------------"
 
 exec wine "${SERVER_EXE}" \
+    -port "${SERVER_PORT:-7777}" \
     -log \
     -nosteam \
     2>&1 | tee "${LOG_FILE}"
