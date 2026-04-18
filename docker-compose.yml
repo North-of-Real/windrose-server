@@ -1,0 +1,53 @@
+services:
+  windrose-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: windrose-server
+    restart: unless-stopped
+
+    # ── Environment (override as needed) ──────────────────
+    environment:
+      # Server identity
+      SERVER_NAME: "My Windrose Server"
+      INVITE_CODE: "pirates123" # Min 6 chars, case-sensitive, 0-9 a-z A-Z
+      IS_PASSWORD_PROTECTED: "false"
+      SERVER_PASSWORD: ""
+      MAX_PLAYERS: "4" # 4 recommended for stability
+      # Leave blank on first run; server will generate a world and
+      # you can fill this in from ServerDescription.json afterward
+      WORLD_ISLAND_ID: ""
+
+      # Wine
+      WINEDEBUG: "-all" # Set to "" for verbose Wine debug output
+
+    # ── Persistent data ────────────────────────────────────
+    volumes:
+      - windrose-saves:/data/saves # World saves & RocksDB
+      - windrose-config:/data/config # ServerDescription.json etc.
+      - windrose-logs:/data/logs # Server logs
+
+    # ── Networking ─────────────────────────────────────────
+    # Windrose uses NAT punch-through / UPnP for player connections.
+    # The server must run with host networking OR have UPnP available.
+    # Use host mode for the easiest connectivity:
+    network_mode: host
+    # Alternatively, use bridge with port forwards (update ports once
+    # the game's fixed ports are officially documented):
+    # ports:
+    #   - "7777:7777/udp"
+    #   - "27015:27015/udp"
+    #   - "27016:27016/tcp"
+
+    # ── Resource limits ────────────────────────────────────
+    deploy:
+      resources:
+        limits:
+          memory: 12G # 8 GB for 2p, 12 GB for 4p (per official docs)
+        reservations:
+          memory: 8G
+
+volumes:
+  windrose-saves:
+  windrose-config:
+  windrose-logs:
