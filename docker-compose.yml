@@ -1,60 +1,19 @@
+---
 services:
-  windrose-server:
-    image: coehl/windrose-server:latest
-    container_name: windrose-server
+  windrose:
+    image: coehl/windrose-server
+    platform: linux/amd64
     restart: unless-stopped
-
-    # ── Environment (override as needed) ──────────────────
-    environment:
-      # Server identity
-      SERVER_NAME: "My Windrose Server"
-      INVITE_CODE: "pirates123" # Min 6 chars, case-sensitive, 0-9 a-z A-Z
-      IS_PASSWORD_PROTECTED: "false"
-      SERVER_PASSWORD: ""
-      MAX_PLAYERS: "4" # 4 recommended for stability
-      # Leave blank on first run; server will generate a world and
-      # you can fill this in from ServerDescription.json afterward
-      WORLD_ISLAND_ID: ""
-
-      # Networking
-      # P2pProxyAddress is written into ServerDescription.json.
-      # SERVER_PORT is passed as -port to the UE5 executable (if honoured).
-      # Windrose uses NAT punch-through so players connect via invite code,
-      # not directly to this port — but you may need it open for Steam relay.
-      P2P_PROXY_ADDRESS: "" # e.g. "0.0.0.0" or your public IP
-      SERVER_PORT: "7777"
-
-      # Wine
-      WINEDEBUG: "-all" # Set to "" for verbose Wine debug output
-
-    # ── Persistent data ────────────────────────────────────
+    container_name: windrose
+    stop_grace_period: 30s
+    env_file:
+      - PUID=1000
+      - PGID=1000
+      - UPDATE_ON_START=true
+      - INVITE_CODE=changeme
+      - SERVER_NAME=Windrose Server
+      - SERVER_PASSWORD=changeme
+      - MAX_PLAYERS=10
+      - P2P_PROXY_ADDRESS=127.0.0.1
     volumes:
-      - windrose-saves:/data/saves # World saves & RocksDB
-      - windrose-config:/data/config # ServerDescription.json etc.
-      - windrose-logs:/data/logs # Server logs
-
-    # ── Networking ─────────────────────────────────────────
-    # Switch between host and bridge below depending on your setup.
-    #
-    # HOST MODE (recommended for NAT punch-through):
-    network_mode: host
-    #
-    # BRIDGE MODE (if you need explicit port control):
-    # Comment out network_mode above and uncomment these instead.
-    # ports:
-    #   - "${SERVER_PORT:-7777}:${SERVER_PORT:-7777}/udp"
-    #   - "27015:27015/udp"
-    #   - "27016:27016/tcp"
-
-    # ── Resource limits ────────────────────────────────────
-    deploy:
-      resources:
-        limits:
-          memory: 12G # 8 GB for 2p, 12 GB for 4p (per official docs)
-        reservations:
-          memory: 8G
-
-volumes:
-  windrose-saves:
-  windrose-config:
-  windrose-logs:
+      - ./server-files:/home/steam/server-files

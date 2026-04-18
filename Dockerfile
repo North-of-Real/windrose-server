@@ -1,65 +1,70 @@
-# ============================================================
-# Windrose Dedicated Server — Docker Image
-# Runs WindroseServer.exe (Windows/UE5) under Wine on Linux
-# Steam App ID: 4129620
-# ============================================================
+# BUILD THE SERVER IMAGE
+FROM --platform=linux/amd64 debian:bookworm-slim
 
-FROM steamcmd/steamcmd:ubuntu-24
+ENV DEBIAN_FRONTEND=noninteractive
 
-# ── Labels ────────────────────────────────────────────────
-LABEL maintainer="Ryan Singleton"
-LABEL description="Windrose Dedicated Server (Wine + SteamCMD)"
-LABEL steam.appid="4129620"
-
-# ── Environment ───────────────────────────────────────────
-# Only non-sensitive, non-secret values here.
-# Pass SERVER_NAME, INVITE_CODE, IS_PASSWORD_PROTECTED,
-# SERVER_PASSWORD, MAX_PLAYERS at runtime via docker-compose
-# environment: block or -e flags — never bake secrets into the image.
-ENV DEBIAN_FRONTEND=noninteractive \
-    WINEDEBUG=-all \
-    WINEPREFIX=/opt/windrose-wine \
-    WINEARCH=win64 \
-    STEAM_APP_ID=4129620 \
-    SERVER_DIR=/opt/windrose-server \
-    DATA_DIR=/data \
-    DISPLAY=:0
-
-# ── Add 32-bit arch and Wine repo ─────────────────────────
 RUN dpkg --add-architecture i386 && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-    wget \
-    gnupg2 \
-    software-properties-common \
-    ca-certificates && \
-    mkdir -pm755 /etc/apt/keyrings && \
-    wget -O /etc/apt/keyrings/winehq-archive.key \
-    https://dl.winehq.org/wine-builds/winehq.key && \
-    wget -NP /etc/apt/sources.list.d/ \
-    https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources && \
-    apt-get update && \
-    apt-get install -y --install-recommends winehq-stable && \
-    apt-get install -y --no-install-recommends \
+    apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    gnupg \
+    unzip \
+    procps \
+    libicu-dev \
+    gettext-base \
     xvfb \
+    xauth \
     jq \
-    procps && \
-    rm -rf /var/lib/apt/lists/*
+    && curl -fsSL https://dl.winehq.org/wine-builds/winehq.key | \
+    gpg --dearmor -o /usr/share/keyrings/winehq-archive.key \
+    && echo "deb [arch=amd64,i386 signed-by=/usr/share/keyrings/winehq-archive.key] https://dl.winehq.org/wine-builds/debian/ bookworm main" \
+    > /etc/apt/sources.list.d/winehq.list \
+    && apt-get update \
+    && apt-get install -y --install-recommends winehq-stable \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# ── Create directories ────────────────────────────────────
-RUN mkdir -p "${SERVER_DIR}" "${DATA_DIR}" "${WINEPREFIX}"
+# Install .NET 8 runtime (required for DepotDownloader)
+RUN curl -sL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && \
+    chmod +x /tmp/dotnet-install.sh && \
+    /tmp/dotnet-install.sh --channel 8.0 --runtime dotnet --install-dir /usr/share/dotnet && \
+    ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet && \
+    rm /tmp/dotnet-install.sh
 
-# ── Copy helper scripts ───────────────────────────────────
-COPY scripts/ /scripts/
-RUN chmod +x /scripts/*.sh
+# Download DepotDownloader
+ARG DEPOT_DOWNLOADER_VERSION=3.4.0
+RUN curl -sL \
+    "https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOT_DOWNLOADER_VERSION}/DepotDownloader-linux-x64.zip" -o \
+    /tmp/dd.zip && \
+    mkdir -p /depotdownloader && \
+    unzip /tmp/dd.zip -d /depotdownloader && \
+    chmod +x /depotdownloader/DepotDownloader && \
+    rm /tmp/dd.zip
 
-# ── Persistent data volume ────────────────────────────────
-VOLUME ["${DATA_DIR}"]
+RUN useradd -m -s /bin/bash steam
 
-# ── Ports ─────────────────────────────────────────────────
-EXPOSE 7777/udp
-EXPOSE 27015/udp
-EXPOSE 27016/tcp
+# Init Wine prefix
+ENV WINEPREFIX=/home/steam/.wine \
+    WINEARCH=win64 \
+    WINEDLLOVERRIDES="mscoree,mshtml=" \
+    DISPLAY=:0
+RUN Xvfb :0 -screen 0 1024x768x16 & \
+    sleep 2 && \
+    su -l steam -c "WINEPREFIX=/home/steam/.wine WINEARCH=win64 WINEDLLOVERRIDES='mscoree,mshtml=' winecfg -v win10 >/dev/null 2>&1; wineboot --init >/dev/null 2>&1" && \
+    kill %1 2>/dev/null; true
 
-# ── Entrypoint ────────────────────────────────────────────
-ENTRYPOINT ["/scripts/entrypoint.sh"]
+ENV HOME=/home/steam \
+    UPDATE_ON_START=true
+
+COPY ./scripts /home/steam/server/
+COPY branding /branding
+
+RUN mkdir -p /home/steam/server-files && \
+    chmod +x /home/steam/server/*.sh
+
+WORKDIR /home/steam/server
+
+HEALTHCHECK --start-period=5m \
+    CMD pgrep "wine" > /dev/null || exit 1
+
+ENTRYPOINT ["/home/steam/server/init.sh"]
