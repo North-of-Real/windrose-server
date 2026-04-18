@@ -22,7 +22,20 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-root}"
 mkdir -p "${XDG_RUNTIME_DIR}"
 chmod 700 "${XDG_RUNTIME_DIR}"
 
-# ── Step 1: Initialise Wine prefix ────────────────────────
+# ── Step 1: Start Xvfb (virtual display) ─────────────────
+# WindroseServer.exe attempts to create windows even as a dedicated
+# server, so Wine needs a display. Xvfb provides a fake one.
+DISPLAY="${DISPLAY:-:0}"
+export DISPLAY
+
+INFO "Starting Xvfb on display ${DISPLAY} ..."
+Xvfb "${DISPLAY}" -screen 0 1024x768x16 &
+XVFB_PID=$!
+# Give Xvfb a moment to be ready
+sleep 2
+INFO "Xvfb started (PID ${XVFB_PID})."
+
+# ── Step 2: Initialise Wine prefix ────────────────────────
 if [[ ! -f "${WINEPREFIX}/system.reg" ]]; then
     INFO "Initialising Wine prefix at ${WINEPREFIX} ..."
     export HOME="${HOME:-/root}"
@@ -33,7 +46,7 @@ else
     INFO "Wine prefix already initialised, skipping."
 fi
 
-# ── Step 2: Download / Update server files via SteamCMD ──
+# ── Step 3: Download / Update server files via SteamCMD ──
 INFO "Running SteamCMD to install/update Windrose Dedicated Server (AppID ${STEAM_APP_ID})..."
 steamcmd \
     +@sSteamCmdForcePlatformType windows \
@@ -44,7 +57,7 @@ steamcmd \
 
 INFO "SteamCMD finished."
 
-# ── Step 3: Locate the server executable ─────────────────
+# ── Step 4: Locate the server executable ─────────────────
 SERVER_EXE=$(find "${SERVER_DIR}" -iname "WindroseServer.exe" | head -1 || true)
 
 if [[ -z "${SERVER_EXE}" ]]; then
@@ -55,17 +68,13 @@ if [[ -z "${SERVER_EXE}" ]]; then
 fi
 
 INFO "Found server executable: ${SERVER_EXE}"
-
-# The exe is directly in SERVER_DIR (not nested in UE5 Binaries/Win64 subdirs)
-# so use SERVER_DIR as the root rather than trying to walk up with dirname.
 SERVER_ROOT="${SERVER_DIR}"
 INFO "Server root: ${SERVER_ROOT}"
 
-# ── Step 4: Symlink save data to persistent volume ────────
+# ── Step 5: Symlink save data to persistent volume ────────
 INTERNAL_SAVED="${SERVER_ROOT}/R5/Saved"
 mkdir -p "$(dirname "${INTERNAL_SAVED}")"
 
-# Seed persistent volume from any defaults the server shipped, if empty
 if [[ -d "${INTERNAL_SAVED}" && "$(ls -A "${INTERNAL_SAVED}" 2>/dev/null)" && \
       -z "$(ls -A "${SAVES_DIR}" 2>/dev/null)" ]]; then
     INFO "Seeding persistent saves from server defaults..."
@@ -76,7 +85,7 @@ rm -rf "${INTERNAL_SAVED}"
 ln -sfn "${SAVES_DIR}" "${INTERNAL_SAVED}"
 INFO "Saves symlinked: ${INTERNAL_SAVED} → ${SAVES_DIR}"
 
-# ── Step 5: Write / merge ServerDescription.json ──────────
+# ── Step 6: Write / merge ServerDescription.json ──────────
 ROOT_CONFIG="${SERVER_ROOT}/ServerDescription.json"
 PERSISTENT_CONFIG="${CONFIG_DIR}/ServerDescription.json"
 
@@ -89,15 +98,30 @@ fi
 
 cp "${PERSISTENT_CONFIG}" "${ROOT_CONFIG}"
 
-# ── Step 6: Launch under Wine ─────────────────────────────
+# ── Step 7: Launch under Wine via Xvfb ───────────────────
 LOG_FILE="${LOG_DIR}/windrose-$(date +%Y%m%d-%H%M%S).log"
 
 INFO "Launching WindroseServer.exe under Wine..."
 INFO "Logs → ${LOG_FILE}"
 INFO "----------------------------------------------"
 
-exec wine "${SERVER_EXE}" \
+# Capture stdout and stderr separately so neither is swallowed.
+wine "${SERVER_EXE}" \
     -port "${SERVER_PORT:-7777}" \
     -log \
     -nosteam \
-    2>&1 | tee "${LOG_FILE}"
+    > >(tee "${LOG_FILE}") \
+    2> >(tee "${LOG_FILE}.stderr" >&2)
+
+EXIT_CODE=$?
+INFO "Wine exited with code ${EXIT_CODE}"
+
+if [[ -s "${LOG_FILE}.stderr" ]]; then
+    INFO "--- stderr ---"
+    cat "${LOG_FILE}.stderr"
+fi
+
+# Clean up Xvfb
+kill "${XVFB_PID}" 2>/dev/null || true
+
+exit ${EXIT_CODE}
